@@ -1,0 +1,21 @@
+checkpoints/
+checkpoints1/
+checkpoints2/
+checkpoints3/
+checkpoints4/       
+checkpoints5/
+checkpoints6/
+linux_pr/
+output_dataset/
+__pycache__/
+test/
+train/
+*.jpeg
+*.jpg
+*.png
+*.pth
+*.ipynb_checkpoints
+Results/
+Separate train dataset/
+
+
