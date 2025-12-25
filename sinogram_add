@@ -1,0 +1,101 @@
+close all
+clear
+clc
+
+%% 1. Input/Output setup
+inputFolder = 'C:\Users\dvjgp\Desktop\CT Dataset\L286\full_3mm';
+
+% Output folders
+outputBase = 'C:\Users\dvjgp\Desktop\CT Dataset\L286\reconstructed_pngs';
+outputGT = fullfile(outputBase, 'groundtruth');
+outputNoisy1 = fullfile(outputBase, 'noisy1');
+outputNoisy2 = fullfile(outputBase, 'noisy2');
+
+% Create folders if they don't exist
+folders = {outputBase, outputGT, outputNoisy1, outputNoisy2};
+for i = 1:numel(folders)
+    if ~exist(folders{i}, 'dir')
+        mkdir(folders{i});
+    end
+end
+
+mystring = '*FD*';
+
+%% 2. Read the full DICOM volume
+[sortedVolume, sort_sliceloc] = readDicoms(inputFolder, mystring);
+[nx, ny, nz] = size(sortedVolume);
+fprintf('Loaded volume with size: %d × %d × %d slices\n', nx, ny, nz);
+
+%% 3. Reconstruction parameters
+WW = 400; WL = 60;
+cMin = 1024 + WL - WW/2;
+cMax = 1024 + WL + WW/2;
+maxi = 4096;
+
+numAngles = 1000;
+maxAngle = 180;
+angleResolution = 180 / numAngles;
+angleVector = 0:angleResolution:maxAngle-angleResolution;
+
+I0 = 1e4;
+sigma_electronicNoise = sqrt(11);
+system_filter = 'Hamming';
+interpolation_method = 'spline';
+frequencyScaling = 1;
+
+%% 4. Precompute filter using one sample slice
+sampleSlice = sortedVolume(:,:,round(nz/2));
+normalized_ObjectSlice = sampleSlice / maxi;
+sinogramRaw_sample = radon(normalized_ObjectSlice, angleVector);
+numDet = size(sinogramRaw_sample, 1);
+halfDet = floor(numDet / 2);
+freqVector = 2 * (-halfDet:halfDet) / numDet;
+modOmegafilter = abs(freqVector);
+sigma1 = 100;
+detVector = (-halfDet:halfDet);
+custom_filter1 = exp(-detVector.^2 / (2 * sigma1^2));
+recon_filter1 = custom_filter1(:) .* modOmegafilter(:);
+
+%% 5. Loop over all slices
+for sliceIndx = 1:nz
+    fprintf('Processing slice %d / %d\n', sliceIndx, nz);
+
+    % Extract slice and normalize
+    objectSlice = sortedVolume(:,:,sliceIndx);
+    normalized_ObjectSlice = objectSlice / maxi;
+    imageSize = size(objectSlice);
+
+    % Compute sinogram
+    sinogramRaw = radon(normalized_ObjectSlice, angleVector);
+
+    % Add two noisy versions
+    rng(0);
+    noisySinogram1 = add_noise_to_sino(sinogramRaw, I0, sigma_electronicNoise);
+    rng(1);
+    noisySinogram2 = add_noise_to_sino(sinogramRaw, I0, sigma_electronicNoise);
+
+    % Reconstruct ground truth and noisy versions
+    [groundtruth_reconSlice, ~] = custom_iradon(sinogramRaw, angleVector, interpolation_method, system_filter, frequencyScaling, imageSize(1), recon_filter1);
+    [noisy_reconSlice1, ~] = custom_iradon(noisySinogram1, angleVector, interpolation_method, system_filter, frequencyScaling, imageSize(1), recon_filter1);
+    [noisy_reconSlice2, ~] = custom_iradon(noisySinogram2, angleVector, interpolation_method, system_filter, frequencyScaling, imageSize(1), recon_filter1);
+
+    % Rescale to original intensity range
+    groundtruth_reconSlice = groundtruth_reconSlice * maxi + 180;
+    noisy_reconSlice1 = noisy_reconSlice1 * maxi + 180;
+    noisy_reconSlice2 = noisy_reconSlice2 * maxi + 180;
+
+    % File names
+    gt_filename = fullfile(outputGT, sprintf('slice_%03d_groundtruth.png', sliceIndx));
+    n1_filename = fullfile(outputNoisy1, sprintf('slice_%03d_noisy1.png', sliceIndx));
+    n2_filename = fullfile(outputNoisy2, sprintf('slice_%03d_noisy2.png', sliceIndx));
+
+    % Save all images as PNG
+    imwrite(mat2gray(groundtruth_reconSlice, [cMin cMax]), gt_filename);
+    imwrite(mat2gray(noisy_reconSlice1, [cMin cMax]), n1_filename);
+    imwrite(mat2gray(noisy_reconSlice2, [cMin cMax]), n2_filename);
+end
+
+fprintf('\n✅ Reconstruction completed for all %d slices.\n', nz);
+fprintf('Ground truth images saved in: %s\n', outputGT);
+fprintf('Noisy1 images saved in: %s\n', outputNoisy1);
+fprintf('Noisy2 images saved in: %s\n', outputNoisy2);
